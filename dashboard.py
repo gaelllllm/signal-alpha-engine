@@ -1,59 +1,10 @@
-# ============================================================
-# PHASE 4 — DASHBOARD
-# Signal Alpha Engine
-# ============================================================
-
 import dash
 from dash import dcc, html, Input, Output
 import plotly.graph_objects as go
 import pandas as pd
+import requests
 import os
 from datetime import datetime
-
-# ============================================================
-# 1. CHARGEMENT DES DONNÉES
-# ============================================================
-
-def charger_trades():
-    try:
-        return pd.read_csv("data/trades.csv", parse_dates=["date_entree", "date_sortie"])
-    except:
-        return pd.DataFrame()
-
-def charger_signaux():
-    try:
-        df = pd.read_csv("data/signaux.csv", index_col=0, parse_dates=True)
-        return df
-    except:
-        return pd.DataFrame()
-
-def charger_metriques():
-    try:
-        return pd.read_csv("data/metriques.csv").iloc[0].to_dict()
-    except:
-        return {}
-
-def get_signaux_aujourdhui(signaux):
-    if signaux.empty:
-        return pd.DataFrame()
-    derniers = signaux.groupby("ticker").last().reset_index()
-    derniers = derniers[["ticker", "signal_proba", "signal_achat", "Close"]].copy()
-    derniers = derniers.sort_values("signal_proba", ascending=False)
-    return derniers
-
-# ============================================================
-# 2. INITIALISATION
-# ============================================================
-
-app = dash.Dash(
-    __name__,
-    title="Signal Alpha Engine",
-    meta_tags=[{"name": "viewport", "content": "width=device-width, initial-scale=1"}]
-)
-
-# ============================================================
-# 3. COULEURS
-# ============================================================
 
 COLORS = {
     "bg":         "#0d1117",
@@ -68,6 +19,9 @@ COLORS = {
     "purple":     "#bc8cff",
 }
 
+EXCLUDED = ["BTC-USD"]
+
+
 def card_style(extra={}):
     base = {
         "backgroundColor": COLORS["card"],
@@ -77,13 +31,56 @@ def card_style(extra={}):
     }
     return {**base, **extra}
 
-# ============================================================
-# 4. LAYOUT
-# ============================================================
+
+def load_trades():
+    try:
+        return pd.read_csv("data/trades.csv", parse_dates=["date_entree", "date_sortie"])
+    except:
+        return pd.DataFrame()
+
+
+def load_signals():
+    try:
+        return pd.read_csv("data/signals.csv", index_col=0, parse_dates=True)
+    except:
+        return pd.DataFrame()
+
+
+def load_metrics():
+    try:
+        return pd.read_csv("data/metrics.csv").iloc[0].to_dict()
+    except:
+        return {}
+
+
+def load_fear_greed():
+    try:
+        r    = requests.get("https://api.alternative.me/fng/?limit=1", timeout=5)
+        data = r.json()["data"][0]
+        return int(data["value"]), data["value_classification"]
+    except:
+        return None, None
+
+
+def get_latest_signals(signals):
+    if signals.empty:
+        return pd.DataFrame()
+    latest = signals.groupby("ticker").last().reset_index()
+    latest = latest[~latest["ticker"].isin(EXCLUDED)]
+    return latest[["ticker", "signal_proba", "signal_achat", "Close"]].sort_values(
+        "signal_proba", ascending=False
+    )
+
+
+app = dash.Dash(
+    __name__,
+    title="Signal Alpha Engine",
+    meta_tags=[{"name": "viewport", "content": "width=device-width, initial-scale=1"}]
+)
 
 app.layout = html.Div([
 
-    # --- HEADER ---
+    # header
     html.Div([
         html.Div([
             html.H1("⚡ Signal Alpha Engine",
@@ -97,8 +94,7 @@ app.layout = html.Div([
             html.P(id="last-update",
                 style={"color": COLORS["text_muted"], "fontSize": "12px",
                        "margin": "0 16px 0 0", "alignSelf": "center"}),
-            html.Button("🔄 Actualiser les signaux",
-                id="refresh-btn",
+            html.Button("🔄 Refresh signals", id="refresh-btn",
                 style={
                     "backgroundColor": COLORS["blue"],
                     "color":           "#0d1117",
@@ -119,29 +115,35 @@ app.layout = html.Div([
         "alignItems":      "center",
     }),
 
-    # --- CONTENU ---
+    # main content
     html.Div([
 
-        # Métriques
-        html.Div(id="metriques-cards", style={
+        # 5 metric cards
+        html.Div(id="metric-cards", style={
             "display":             "grid",
-            "gridTemplateColumns": "repeat(4, 1fr)",
+            "gridTemplateColumns": "repeat(5, 1fr)",
             "gap":                 "16px",
             "marginBottom":        "24px",
         }),
 
-        # Signaux
-        html.Div([
-            html.H2("📡 Signaux du jour",
-                style={"color": COLORS["text"], "fontSize": "16px",
-                       "fontWeight": "600", "margin": "0 0 16px 0"}),
-            html.Div(id="signaux-table"),
-        ], style=card_style({"marginBottom": "24px"})),
-
-        # Graphiques haut
+        # signals with date
         html.Div([
             html.Div([
-                html.H2("💰 Courbe d'équité",
+                html.H2("📡 Today's signals",
+                    style={"color": COLORS["text"], "fontSize": "16px",
+                           "fontWeight": "600", "margin": "0"}),
+                html.P(datetime.now().strftime("%A %d %B %Y"),
+                    style={"color": COLORS["text_muted"], "fontSize": "12px",
+                           "margin": "0"}),
+            ], style={"display": "flex", "justifyContent": "space-between",
+                      "alignItems": "center", "marginBottom": "16px"}),
+            html.Div(id="signals-table"),
+        ], style=card_style({"marginBottom": "24px"})),
+
+        # top charts
+        html.Div([
+            html.Div([
+                html.H2("💰 Equity curve",
                     style={"color": COLORS["text"], "fontSize": "16px",
                            "fontWeight": "600", "margin": "0 0 16px 0"}),
                 dcc.Graph(id="equity-curve",
@@ -150,10 +152,10 @@ app.layout = html.Div([
             ], style=card_style()),
 
             html.Div([
-                html.H2("📊 Performance par actif",
+                html.H2("📊 PnL by asset",
                     style={"color": COLORS["text"], "fontSize": "16px",
                            "fontWeight": "600", "margin": "0 0 16px 0"}),
-                dcc.Graph(id="perf-par-actif",
+                dcc.Graph(id="perf-by-asset",
                     config={"displayModeBar": False},
                     style={"height": "300px"}),
             ], style=card_style()),
@@ -165,22 +167,22 @@ app.layout = html.Div([
             "marginBottom":        "24px",
         }),
 
-        # Graphiques bas
+        # bottom charts
         html.Div([
             html.Div([
-                html.H2("📈 Distribution des rendements",
+                html.H2("📈 Return distribution",
                     style={"color": COLORS["text"], "fontSize": "16px",
                            "fontWeight": "600", "margin": "0 0 16px 0"}),
-                dcc.Graph(id="rendements-hist",
+                dcc.Graph(id="returns-hist",
                     config={"displayModeBar": False},
                     style={"height": "250px"}),
             ], style=card_style()),
 
             html.Div([
-                html.H2("🎯 Raisons de sortie",
+                html.H2("🎯 Exit reasons",
                     style={"color": COLORS["text"], "fontSize": "16px",
                            "fontWeight": "600", "margin": "0 0 16px 0"}),
-                dcc.Graph(id="sorties-pie",
+                dcc.Graph(id="exits-pie",
                     config={"displayModeBar": False},
                     style={"height": "250px"}),
             ], style=card_style()),
@@ -192,9 +194,9 @@ app.layout = html.Div([
             "marginBottom":        "24px",
         }),
 
-        # Derniers trades
+        # recent trades
         html.Div([
-            html.H2("📋 Derniers trades",
+            html.H2("📋 Recent trades",
                 style={"color": COLORS["text"], "fontSize": "16px",
                        "fontWeight": "600", "margin": "0 0 16px 0"}),
             html.Div(id="trades-table"),
@@ -210,371 +212,285 @@ app.layout = html.Div([
     "fontFamily":      "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
 })
 
-# ============================================================
-# 5. CALLBACKS
-# ============================================================
 
 @app.callback(
-    Output("metriques-cards",  "children"),
-    Output("signaux-table",    "children"),
-    Output("equity-curve",     "figure"),
-    Output("perf-par-actif",   "figure"),
-    Output("rendements-hist",  "figure"),
-    Output("sorties-pie",      "figure"),
-    Output("trades-table",     "children"),
-    Output("last-update",      "children"),
-    Input("interval",          "n_intervals"),
-    Input("refresh-btn",       "n_clicks"),
+    Output("metric-cards",  "children"),
+    Output("signals-table", "children"),
+    Output("equity-curve",  "figure"),
+    Output("perf-by-asset", "figure"),
+    Output("returns-hist",  "figure"),
+    Output("exits-pie",     "figure"),
+    Output("trades-table",  "children"),
+    Output("last-update",   "children"),
+    Input("interval",       "n_intervals"),
+    Input("refresh-btn",    "n_clicks"),
 )
-def update_dashboard(n_intervals, n_clicks):
-
-    trades  = charger_trades()
-    signaux = charger_signaux()
-    metrics = charger_metriques()
+def update(n_intervals, n_clicks):
+    trades  = load_trades()
+    signals = load_signals()
+    metrics = load_metrics()
     now     = datetime.now().strftime("%d/%m/%Y %H:%M")
 
-    # --------------------------------------------------------
-    # MÉTRIQUES CARDS
-    # --------------------------------------------------------
-    def metric_card(titre, valeur, couleur, sous_titre=""):
+    # metric cards
+    def metric_card(label, value, color, sub=""):
         return html.Div([
-            html.P(titre,
-                style={"color": COLORS["text_muted"], "fontSize": "12px",
-                       "margin": "0 0 8px 0", "textTransform": "uppercase",
-                       "letterSpacing": "0.5px"}),
-            html.H2(valeur,
-                style={"color": couleur, "fontSize": "28px",
-                       "fontWeight": "700", "margin": "0"}),
-            html.P(sous_titre,
-                style={"color": COLORS["text_muted"], "fontSize": "11px",
-                       "margin": "4px 0 0 0"}),
+            html.P(label, style={"color": COLORS["text_muted"], "fontSize": "12px",
+                                 "margin": "0 0 8px 0", "textTransform": "uppercase",
+                                 "letterSpacing": "0.5px"}),
+            html.H2(value, style={"color": color, "fontSize": "26px",
+                                  "fontWeight": "700", "margin": "0"}),
+            html.P(sub, style={"color": COLORS["text_muted"], "fontSize": "11px",
+                               "margin": "4px 0 0 0"}),
         ], style=card_style())
 
     if metrics:
+        nb_trades    = int(metrics.get('nb_trades', 0))
+        total_return = metrics.get('rendement_total', 0)
+
+        # calculate exact period from trades
+        if not trades.empty:
+            start      = pd.to_datetime(trades["date_entree"].min())
+            end        = pd.to_datetime(trades["date_entree"].max())
+            years      = (end - start).days / 365.25
+            annual_return = total_return / years if years > 0 else 0
+            start_date = start.strftime("%b %Y")
+        else:
+            annual_return = 0
+            start_date    = ""
+
+        # fear & greed
+        fg_value, fg_label = load_fear_greed()
+        fg_color = (COLORS["green"]  if fg_value and fg_value > 60
+               else COLORS["red"]    if fg_value and fg_value < 40
+               else COLORS["yellow"])
+
         cards = [
-            metric_card("Rendement total",
-                f"+{metrics.get('rendement_total', 0):.1f}%",
-                COLORS["green"], "Sur la période de test"),
+            metric_card("Total return",
+                f"+{total_return:.1f}%",
+                COLORS["green"], f"since {start_date}"),
+            metric_card("Annual return",
+                f"+{annual_return:.1f}%",
+                COLORS["green"], "annualized"),
             metric_card("Sharpe ratio",
                 f"{metrics.get('sharpe', 0):.2f}",
-                COLORS["blue"], ">1.5 = bon"),
+                COLORS["blue"], ">1.5 = good"),
             metric_card("Win rate",
                 f"{metrics.get('win_rate', 0):.1f}%",
-                COLORS["purple"], f"{int(metrics.get('nb_trades', 0))} trades"),
-            metric_card("Max drawdown",
-                f"{metrics.get('max_drawdown', 0):.1f}%",
-                COLORS["red"], "Pire perte depuis un pic"),
+                COLORS["purple"], f"{nb_trades} trades"),
+            metric_card("Fear & Greed",
+                f"{fg_value}/100" if fg_value else "N/A",
+                fg_color, fg_label or ""),
         ]
     else:
-        cards = [html.P("Aucune métrique disponible",
-            style={"color": COLORS["text_muted"]})]
+        cards = [html.P("No metrics available",
+                        style={"color": COLORS["text_muted"]})]
 
-    # --------------------------------------------------------
-    # SIGNAUX DU JOUR
-    # --------------------------------------------------------
-    signaux_jour = get_signaux_aujourdhui(signaux)
-
-    if not signaux_jour.empty:
+    # signals table
+    latest = get_latest_signals(signals)
+    if not latest.empty:
         rows = []
-        for _, row in signaux_jour.iterrows():
-            achat   = row["signal_achat"] == 1
-            couleur = COLORS["green"] if achat else COLORS["text_muted"]
-            emoji   = "✅ ACHETER" if achat else "⏸ ATTENDRE"
-            proba   = row["signal_proba"]
+        for _, row in latest.iterrows():
+            buy   = row["signal_achat"] == 1
+            color = COLORS["green"] if buy else COLORS["text_muted"]
+            label = "✅ BUY" if buy else "⏸ WAIT"
+            proba = row["signal_proba"]
 
-            barre = html.Div([
+            bar = html.Div([
                 html.Div(style={
                     "width":           f"{proba*100:.0f}%",
                     "height":          "6px",
-                    "backgroundColor": COLORS["green"] if achat else COLORS["border"],
+                    "backgroundColor": COLORS["green"] if buy else COLORS["border"],
                     "borderRadius":    "3px",
                 }),
-            ], style={
-                "width":           "100px",
-                "backgroundColor": COLORS["border"],
-                "borderRadius":    "3px",
-                "height":          "6px",
-            })
+            ], style={"width": "100px", "backgroundColor": COLORS["border"],
+                      "borderRadius": "3px", "height": "6px"})
 
             rows.append(html.Div([
                 html.Span(row["ticker"],
                     style={"color": COLORS["text"], "fontWeight": "600",
-                           "width": "100px", "display": "inline-block",
-                           "fontSize": "14px"}),
-                html.Span(emoji,
-                    style={"color": couleur, "width": "130px",
-                           "display": "inline-block", "fontSize": "13px",
-                           "fontWeight": "600"}),
+                           "width": "100px", "display": "inline-block", "fontSize": "14px"}),
+                html.Span(label,
+                    style={"color": color, "width": "100px", "display": "inline-block",
+                           "fontSize": "13px", "fontWeight": "600"}),
                 html.Span(f"{proba*100:.1f}%",
-                    style={"color": couleur, "width": "60px",
+                    style={"color": color, "width": "60px",
                            "display": "inline-block", "fontSize": "13px"}),
-                barre,
+                bar,
                 html.Span(f"${row['Close']:.2f}",
                     style={"color": COLORS["text_muted"], "fontSize": "13px",
                            "marginLeft": "20px"}),
-            ], style={
-                "display":      "flex",
-                "alignItems":   "center",
-                "padding":      "10px 0",
-                "borderBottom": f"1px solid {COLORS['border']}",
-                "gap":          "16px",
-            }))
+            ], style={"display": "flex", "alignItems": "center", "padding": "10px 0",
+                      "borderBottom": f"1px solid {COLORS['border']}", "gap": "16px"}))
 
-        signaux_html = html.Div(rows)
+        signals_html = html.Div(rows)
     else:
-        signaux_html = html.P("Aucun signal disponible",
-            style={"color": COLORS["text_muted"]})
+        signals_html = html.P("No signals — run data_pipeline.py and model.py",
+                              style={"color": COLORS["text_muted"]})
 
-    # --------------------------------------------------------
-    # COURBE D'ÉQUITÉ — corrigée
-    # --------------------------------------------------------
+    # equity curve
     if not trades.empty:
-        # Trie tous les trades par date pour une courbe continue
-        trades_sorted = trades.sort_values("date_entree").reset_index(drop=True)
-
-        # Recalcule la courbe de capital dans l'ordre chronologique
+        sorted_trades = trades.sort_values("date_entree").reset_index(drop=True)
         capital = 10000
-        courbe  = [capital]
-        for _, t in trades_sorted.iterrows():
+        curve   = [capital]
+        for _, t in sorted_trades.iterrows():
             capital += t["pnl"]
-            courbe.append(round(capital, 2))
+            curve.append(round(capital, 2))
+        dates = [sorted_trades["date_entree"].iloc[0]] + list(sorted_trades["date_entree"])
 
-        dates = [trades_sorted["date_entree"].iloc[0]] + list(trades_sorted["date_entree"])
+        y_min = min(curve) * 0.98
+        y_max = max(curve) * 1.02
 
         fig_equity = go.Figure()
-
         fig_equity.add_trace(go.Scatter(
-            x         = dates,
-            y         = courbe,
-            mode      = "lines",
-            name      = "Capital",
-            line      = {"color": COLORS["blue"], "width": 2},
-            fill      = "tozeroy",
-            fillcolor = "rgba(88, 166, 255, 0.08)",
+            x=dates, y=curve, mode="lines",
+            line={"color": COLORS["blue"], "width": 2},
+            fill="tozeroy", fillcolor="rgba(88, 166, 255, 0.08)",
         ))
-
         fig_equity.add_hline(
-            y                     = 10000,
-            line_dash             = "dash",
-            line_color            = COLORS["text_muted"],
-            opacity               = 0.5,
-            annotation_text       = "Capital initial",
-            annotation_font_color = COLORS["text_muted"],
+            y=10000, line_dash="dash",
+            line_color=COLORS["text_muted"], opacity=0.5,
+            annotation_text="initial capital",
+            annotation_font_color=COLORS["text_muted"],
         )
-
         fig_equity.update_layout(
-            paper_bgcolor = COLORS["card"],
-            plot_bgcolor  = COLORS["card"],
-            font          = {"color": COLORS["text"], "size": 11},
-            margin        = {"t": 10, "b": 30, "l": 60, "r": 20},
-            xaxis         = {"gridcolor": COLORS["border"], "showgrid": True},
-            yaxis         = {"gridcolor": COLORS["border"], "showgrid": True,
-                            "tickprefix": "$"},
-            showlegend    = False,
-            hovermode     = "x unified",
+            paper_bgcolor=COLORS["card"], plot_bgcolor=COLORS["card"],
+            font={"color": COLORS["text"], "size": 11},
+            margin={"t": 10, "b": 30, "l": 60, "r": 20},
+            xaxis={"gridcolor": COLORS["border"]},
+            yaxis={"gridcolor": COLORS["border"], "tickprefix": "$",
+                   "range": [y_min, y_max]},
+            showlegend=False, hovermode="x unified",
         )
     else:
         fig_equity = go.Figure()
-        fig_equity.update_layout(
-            paper_bgcolor = COLORS["card"],
-            plot_bgcolor  = COLORS["card"],
-        )
+        fig_equity.update_layout(paper_bgcolor=COLORS["card"], plot_bgcolor=COLORS["card"])
 
-    # --------------------------------------------------------
-    # PERFORMANCE PAR ACTIF
-    # --------------------------------------------------------
+    # pnl by asset
     if not trades.empty:
         perf = trades.groupby("ticker").agg(
-            pnl_total = ("pnl", "sum"),
-            nb_trades = ("pnl", "count"),
-            win_rate  = ("pnl", lambda x: (x > 0).mean() * 100)
+            pnl_total=("pnl", "sum")
         ).reset_index().sort_values("pnl_total", ascending=True)
 
-        colors_bar = [COLORS["green"] if x > 0 else COLORS["red"]
-                     for x in perf["pnl_total"]]
-
         fig_perf = go.Figure(go.Bar(
-            x            = perf["pnl_total"],
-            y            = perf["ticker"],
-            orientation  = "h",
-            marker_color = colors_bar,
-            text         = [f"+${x:.0f}" if x > 0 else f"-${abs(x):.0f}"
-                           for x in perf["pnl_total"]],
-            textposition = "outside",
+            x=perf["pnl_total"], y=perf["ticker"], orientation="h",
+            marker_color=[COLORS["green"] if x > 0 else COLORS["red"]
+                         for x in perf["pnl_total"]],
+            text=[f"+${x:.0f}" if x > 0 else f"-${abs(x):.0f}"
+                 for x in perf["pnl_total"]],
+            textposition="outside",
         ))
-
         fig_perf.update_layout(
-            paper_bgcolor = COLORS["card"],
-            plot_bgcolor  = COLORS["card"],
-            font          = {"color": COLORS["text"], "size": 11},
-            margin        = {"t": 10, "b": 30, "l": 80, "r": 60},
-            xaxis         = {"gridcolor": COLORS["border"], "showgrid": True,
-                            "tickprefix": "$"},
-            yaxis         = {"gridcolor": COLORS["border"]},
-            showlegend    = False,
+            paper_bgcolor=COLORS["card"], plot_bgcolor=COLORS["card"],
+            font={"color": COLORS["text"], "size": 11},
+            margin={"t": 10, "b": 30, "l": 80, "r": 60},
+            xaxis={"gridcolor": COLORS["border"], "tickprefix": "$"},
+            yaxis={"gridcolor": COLORS["border"]},
+            showlegend=False,
         )
     else:
         fig_perf = go.Figure()
-        fig_perf.update_layout(paper_bgcolor=COLORS["card"],
-                               plot_bgcolor=COLORS["card"])
+        fig_perf.update_layout(paper_bgcolor=COLORS["card"], plot_bgcolor=COLORS["card"])
 
-    # --------------------------------------------------------
-    # HISTOGRAMME DES RENDEMENTS
-    # --------------------------------------------------------
+    # return distribution
     if not trades.empty:
         fig_hist = go.Figure(go.Histogram(
-            x        = trades["rendement"],
-            nbinsx   = 30,
-            marker   = {"color": COLORS["blue"], "opacity": 0.8},
+            x=trades["rendement"], nbinsx=30,
+            marker={"color": COLORS["blue"], "opacity": 0.8},
         ))
-
-        fig_hist.add_vline(x=0, line_color=COLORS["red"],
-                          line_dash="dash", opacity=0.7)
-
+        fig_hist.add_vline(x=0, line_color=COLORS["red"], line_dash="dash", opacity=0.7)
         fig_hist.update_layout(
-            paper_bgcolor = COLORS["card"],
-            plot_bgcolor  = COLORS["card"],
-            font          = {"color": COLORS["text"], "size": 11},
-            margin        = {"t": 10, "b": 30, "l": 50, "r": 20},
-            xaxis         = {"gridcolor": COLORS["border"],
-                            "ticksuffix": "%"},
-            yaxis         = {"gridcolor": COLORS["border"]},
-            showlegend    = False,
-            bargap        = 0.1,
+            paper_bgcolor=COLORS["card"], plot_bgcolor=COLORS["card"],
+            font={"color": COLORS["text"], "size": 11},
+            margin={"t": 10, "b": 30, "l": 50, "r": 20},
+            xaxis={"gridcolor": COLORS["border"], "ticksuffix": "%"},
+            yaxis={"gridcolor": COLORS["border"]},
+            showlegend=False, bargap=0.1,
         )
     else:
         fig_hist = go.Figure()
-        fig_hist.update_layout(paper_bgcolor=COLORS["card"],
-                               plot_bgcolor=COLORS["card"])
+        fig_hist.update_layout(paper_bgcolor=COLORS["card"], plot_bgcolor=COLORS["card"])
 
-    # --------------------------------------------------------
-    # PIE CHART
-    # --------------------------------------------------------
+    # exit pie
     if not trades.empty:
-        sorties = trades["raison"].value_counts()
-
+        exits = trades["raison"].value_counts()
         fig_pie = go.Figure(go.Pie(
-            labels   = sorties.index,
-            values   = sorties.values,
-            hole     = 0.5,
-            marker   = {"colors": [COLORS["blue"],
-                                   COLORS["red"],
-                                   COLORS["green"]]},
-            textfont = {"color": COLORS["text"]},
+            labels=exits.index, values=exits.values, hole=0.5,
+            marker={"colors": [COLORS["blue"], COLORS["red"], COLORS["green"]]},
+            textfont={"color": COLORS["text"]},
         ))
-
         fig_pie.update_layout(
-            paper_bgcolor = COLORS["card"],
-            plot_bgcolor  = COLORS["card"],
-            font          = {"color": COLORS["text"], "size": 11},
-            margin        = {"t": 10, "b": 10, "l": 20, "r": 20},
-            legend        = {"font": {"color": COLORS["text"]}},
-            showlegend    = True,
+            paper_bgcolor=COLORS["card"], plot_bgcolor=COLORS["card"],
+            font={"color": COLORS["text"], "size": 11},
+            margin={"t": 10, "b": 10, "l": 20, "r": 20},
+            legend={"font": {"color": COLORS["text"]}},
         )
     else:
         fig_pie = go.Figure()
-        fig_pie.update_layout(paper_bgcolor=COLORS["card"],
-                              plot_bgcolor=COLORS["card"])
+        fig_pie.update_layout(paper_bgcolor=COLORS["card"], plot_bgcolor=COLORS["card"])
 
-    # --------------------------------------------------------
-    # DERNIERS TRADES
-    # --------------------------------------------------------
+    # recent trades
     if not trades.empty:
-        # Trie par date pour afficher les plus récents en premier
-        derniers = trades.sort_values("date_entree", ascending=False).head(10)
+        recent = trades.sort_values("date_entree", ascending=False).head(10)
 
-        header = html.Div([
-            html.Span("Date",
-                style={"color": COLORS["text_muted"], "fontSize": "11px",
-                       "width": "100px", "display": "inline-block",
-                       "textTransform": "uppercase"}),
-            html.Span("Ticker",
-                style={"color": COLORS["text_muted"], "fontSize": "11px",
-                       "width": "80px", "display": "inline-block",
-                       "textTransform": "uppercase"}),
-            html.Span("Entrée",
-                style={"color": COLORS["text_muted"], "fontSize": "11px",
-                       "width": "80px", "display": "inline-block",
-                       "textTransform": "uppercase"}),
-            html.Span("Sortie",
-                style={"color": COLORS["text_muted"], "fontSize": "11px",
-                       "width": "80px", "display": "inline-block",
-                       "textTransform": "uppercase"}),
-            html.Span("PnL",
-                style={"color": COLORS["text_muted"], "fontSize": "11px",
-                       "width": "80px", "display": "inline-block",
-                       "textTransform": "uppercase"}),
-            html.Span("Rendement",
-                style={"color": COLORS["text_muted"], "fontSize": "11px",
-                       "width": "90px", "display": "inline-block",
-                       "textTransform": "uppercase"}),
-            html.Span("Raison",
-                style={"color": COLORS["text_muted"], "fontSize": "11px",
-                       "textTransform": "uppercase"}),
-        ], style={
-            "padding":      "8px 0",
-            "borderBottom": f"1px solid {COLORS['border']}",
-        })
+        headers = ["Date", "Ticker", "Entry", "Exit", "PnL", "Return", "Reason"]
+        widths  = ["100px", "80px", "80px", "80px", "80px", "90px", "auto"]
 
-        rows = [header]
-        for _, t in derniers.iterrows():
-            positif = t["pnl"] > 0
-            couleur = COLORS["green"] if positif else COLORS["red"]
+        header_row = html.Div([
+            html.Span(h, style={"color": COLORS["text_muted"], "fontSize": "11px",
+                                "width": w, "display": "inline-block",
+                                "textTransform": "uppercase"})
+            for h, w in zip(headers, widths)
+        ], style={"padding": "8px 0", "borderBottom": f"1px solid {COLORS['border']}"})
 
-            raison_colors = {
-                "take_profit": COLORS["green"],
-                "stop_loss":   COLORS["red"],
-                "horizon":     COLORS["text_muted"],
-            }
+        exit_colors = {
+            "take_profit": COLORS["green"],
+            "stop_loss":   COLORS["red"],
+            "horizon":     COLORS["text_muted"],
+        }
 
-            rows.append(html.Div([
+        trade_rows = [header_row]
+        for _, t in recent.iterrows():
+            pos   = t["pnl"] > 0
+            color = COLORS["green"] if pos else COLORS["red"]
+            sign  = "+" if pos else ""
+
+            trade_rows.append(html.Div([
                 html.Span(str(t["date_entree"])[:10],
                     style={"color": COLORS["text_muted"], "fontSize": "13px",
                            "width": "100px", "display": "inline-block"}),
                 html.Span(t["ticker"],
-                    style={"color": COLORS["text"], "fontSize": "13px",
-                           "fontWeight": "600", "width": "80px",
-                           "display": "inline-block"}),
+                    style={"color": COLORS["text"], "fontWeight": "600",
+                           "fontSize": "13px", "width": "80px", "display": "inline-block"}),
                 html.Span(f"${t['prix_entree']:.2f}",
                     style={"color": COLORS["text"], "fontSize": "13px",
                            "width": "80px", "display": "inline-block"}),
                 html.Span(f"${t['prix_sortie']:.2f}",
                     style={"color": COLORS["text"], "fontSize": "13px",
                            "width": "80px", "display": "inline-block"}),
-                html.Span(f"{'+'if positif else ''}{t['pnl']:.2f}$",
-                    style={"color": couleur, "fontSize": "13px",
-                           "fontWeight": "600", "width": "80px",
-                           "display": "inline-block"}),
-                html.Span(f"{'+'if positif else ''}{t['rendement']:.1f}%",
-                    style={"color": couleur, "fontSize": "13px",
+                html.Span(f"{sign}{t['pnl']:.2f}$",
+                    style={"color": color, "fontWeight": "600", "fontSize": "13px",
+                           "width": "80px", "display": "inline-block"}),
+                html.Span(f"{sign}{t['rendement']:.1f}%",
+                    style={"color": color, "fontSize": "13px",
                            "width": "90px", "display": "inline-block"}),
                 html.Span(t["raison"],
-                    style={"color": raison_colors.get(t["raison"],
-                           COLORS["text_muted"]),
+                    style={"color": exit_colors.get(t["raison"], COLORS["text_muted"]),
                            "fontSize": "12px"}),
-            ], style={
-                "padding":      "10px 0",
-                "borderBottom": f"1px solid {COLORS['border']}",
-            }))
+            ], style={"padding": "10px 0",
+                      "borderBottom": f"1px solid {COLORS['border']}"}))
 
-        trades_html = html.Div(rows)
+        trades_html = html.Div(trade_rows)
     else:
-        trades_html = html.P("Aucun trade disponible",
-            style={"color": COLORS["text_muted"]})
+        trades_html = html.P("No trades available",
+                             style={"color": COLORS["text_muted"]})
 
-    return (cards, signaux_html, fig_equity, fig_perf,
+    return (cards, signals_html, fig_equity, fig_perf,
             fig_hist, fig_pie, trades_html,
-            f"Dernière mise à jour : {now}")
+            f"Last update: {now}")
 
-# ============================================================
-# 6. LANCEMENT
-# ============================================================
 
 if __name__ == "__main__":
-    print("=" * 50)
-    print("  SIGNAL ALPHA ENGINE — Dashboard")
-    print("=" * 50)
-    print("\n✓ Dashboard disponible sur : http://localhost:8050")
-    print("  Ouvre ce lien dans ton navigateur\n")
-
+    print("Signal Alpha Engine — Dashboard")
+    print("=" * 40)
+    print("  running on http://localhost:8050\n")
     app.run(debug=True, port=8050, use_reloader=False)
