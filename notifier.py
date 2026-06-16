@@ -2,11 +2,12 @@ import asyncio
 from telegram import Bot
 from datetime import datetime
 
-# ============================================================
-# TELEGRAM CONFIG
-# ============================================================
-TOKEN   = "8799557932:AAFCp3Xy_AFHSqL5-fGQhBPZA8J1BeNHhaU"
-CHAT_ID = "5278385166"
+from dotenv import load_dotenv
+import os
+load_dotenv()
+
+TOKEN   = os.getenv("TELEGRAM_TOKEN")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 bot = Bot(token=TOKEN)
 

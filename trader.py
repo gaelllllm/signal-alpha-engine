@@ -7,12 +7,12 @@ from notifier import notify_signal, notify_order, notify_no_signals, notify_dail
 import logging
 import os
 
-# ============================================================
-# ALPACA API KEYS
-# ============================================================
-API_KEY    = "PK2RWLSFLFIQ3BU2O3THLG5IH7"
-API_SECRET = "5Ltwkpn4ey5eV1q9jbkYRY9bD4V85CWJeFwT2r2bVBtD"
-PAPER      = True
+from dotenv import load_dotenv
+import os
+load_dotenv()
+
+API_KEY    = os.getenv("ALPACA_KEY")
+API_SECRET = os.getenv("ALPACA_SECRET")
 
 # ============================================================
 # TRADING PARAMETERS
