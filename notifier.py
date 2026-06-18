@@ -1,9 +1,9 @@
 import asyncio
 from telegram import Bot
 from datetime import datetime
-
 from dotenv import load_dotenv
 import os
+
 load_dotenv()
 
 TOKEN   = os.getenv("TELEGRAM_TOKEN")
@@ -13,17 +13,21 @@ bot = Bot(token=TOKEN)
 
 
 async def send_message(text):
-    """Send a message to Telegram."""
     await bot.send_message(chat_id=CHAT_ID, text=text, parse_mode="HTML")
 
 
 def notify(text):
-    """Wrapper to send message from sync code."""
-    asyncio.run(send_message(text))
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        loop.run_until_complete(send_message(text))
+    except Exception as e:
+        print(f"  Telegram error: {e}")
 
 
 def notify_signal(ticker, proba, price, stop, target):
-    """Notify when a buy signal is detected."""
     msg = (
         f"<b>⚡ Signal Alpha Engine</b>\n"
         f"━━━━━━━━━━━━━━━\n"
@@ -40,7 +44,6 @@ def notify_signal(ticker, proba, price, stop, target):
 
 
 def notify_order(ticker, qty, price, order_id):
-    """Notify when an order is placed."""
     msg = (
         f"<b>✅ Order Placed</b>\n"
         f"━━━━━━━━━━━━━━━\n"
@@ -56,7 +59,6 @@ def notify_order(ticker, qty, price, order_id):
 
 
 def notify_no_signals():
-    """Notify when no signals today."""
     msg = (
         f"<b>⚡ Signal Alpha Engine</b>\n"
         f"━━━━━━━━━━━━━━━\n"
@@ -69,7 +71,6 @@ def notify_no_signals():
 
 
 def notify_daily_summary(nb_orders, capital):
-    """Notify daily summary."""
     msg = (
         f"<b>📊 Daily Summary</b>\n"
         f"━━━━━━━━━━━━━━━\n"
@@ -82,7 +83,6 @@ def notify_daily_summary(nb_orders, capital):
 
 
 if __name__ == "__main__":
-    # test — send a message to verify everything works
     notify(
         "<b>⚡ Signal Alpha Engine</b>\n"
         "━━━━━━━━━━━━━━━\n"

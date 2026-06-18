@@ -3,20 +3,17 @@ from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
 from datetime import datetime
+from dotenv import load_dotenv
 from notifier import notify_signal, notify_order, notify_no_signals, notify_daily_summary
 import logging
 import os
 
-from dotenv import load_dotenv
-import os
 load_dotenv()
 
 API_KEY    = os.getenv("ALPACA_KEY")
 API_SECRET = os.getenv("ALPACA_SECRET")
+PAPER      = True
 
-# ============================================================
-# TRADING PARAMETERS
-# ============================================================
 CAPITAL          = 100000
 POSITION_SIZE    = 0.10
 STOP_LOSS_PCT    = 0.02
@@ -37,19 +34,15 @@ def connect(api_key, api_secret, paper=True):
 def get_latest_signals(path="data/signals.csv"):
     print("\nLoading signals...")
     df = pd.read_csv(path, index_col=0, parse_dates=True)
-
     latest = df.groupby("ticker").last().reset_index()
-
     buys = latest[
         (latest["signal_achat"] == 1) &
         (latest["signal_proba"] > SIGNAL_THRESHOLD) &
         (~latest["ticker"].isin(EXCLUDED))
     ].copy()
-
     print(f"  {len(buys)} buy signals found")
     for _, row in buys.iterrows():
         print(f"  -> {row['ticker']}  {row['signal_proba']*100:.1f}%  ${row['Close']:.2f}")
-
     return buys
 
 
@@ -72,10 +65,10 @@ def place_order(client, ticker, price, capital):
     print(f"\n  Placing order: BUY {qty} {ticker} @ ${price:.2f}")
     print(f"  stop loss: ${stop_price:.2f} | take profit: ${target_price:.2f}")
 
-    # notify signal on Telegram
     notify_signal(ticker, SIGNAL_THRESHOLD, price, stop_price, target_price)
 
     try:
+        # simple market order — SL/TP checked at close by position manager
         order = client.submit_order(MarketOrderRequest(
             symbol        = ticker,
             qty           = qty,
@@ -83,8 +76,6 @@ def place_order(client, ticker, price, capital):
             time_in_force = TimeInForce.DAY,
         ))
         print(f"  order placed — id: {order.id}")
-
-        # notify order placed on Telegram
         notify_order(ticker, qty, price, str(order.id))
         return order
 
@@ -138,7 +129,6 @@ def run_trader():
     print(f"Done — {orders_placed} orders placed")
     print(f"{'='*40}")
 
-    # send daily summary to Telegram
     notify_daily_summary(orders_placed, capital)
 
 

@@ -2,20 +2,20 @@ import pandas as pd
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
-from datetime import datetime, timezone
+from datetime import datetime
+from dotenv import load_dotenv
 from notifier import notify
 import logging
 import os
 
-from dotenv import load_dotenv
-import os
 load_dotenv()
 
-API_KEY    = os.getenv("ALPACA_KEY")
-API_SECRET = os.getenv("ALPACA_SECRET")
-
-# close position after this many trading days
+API_KEY          = os.getenv("ALPACA_KEY")
+API_SECRET       = os.getenv("ALPACA_SECRET")
+PAPER            = True
 MAX_HOLDING_DAYS = 5
+STOP_LOSS_PCT    = 0.02
+TAKE_PROFIT_PCT  = 0.05
 
 
 def connect():
@@ -27,25 +27,13 @@ def connect():
 
 
 def get_open_positions(client):
-    """Get all open positions with their age."""
     positions = client.get_all_positions()
     print(f"\n  open positions: {len(positions)}")
     return positions
 
 
-def get_position_age(position):
-    """
-    Estimate position age from Alpaca.
-    Alpaca doesn't give entry date directly so we use the cost basis date
-    from orders history.
-    """
-    # we'll use a simple approach — check if unrealized PnL suggests old position
-    return None
-
-
-def close_position(client, symbol, qty):
-    """Close a position by selling all shares."""
-    print(f"\n  Closing {symbol} — {qty} shares")
+def close_position(client, symbol, qty, reason):
+    print(f"\n  Closing {symbol} — {qty} shares — reason: {reason}")
     try:
         order = client.submit_order(MarketOrderRequest(
             symbol        = symbol,
@@ -60,20 +48,8 @@ def close_position(client, symbol, qty):
         return None
 
 
-def check_and_close_old_positions(client):
-    """
-    Check all open positions and close those held too long.
-    Since Alpaca paper trading doesn't give entry date easily,
-    we cross-reference with our trades.csv file.
-    """
-    print("\nChecking positions age...")
-
-    # load our trade history
-    try:
-        trades = pd.read_csv("data/trades.csv", parse_dates=["date_entree"])
-    except:
-        print("  no trades.csv found")
-        return
+def check_positions(client):
+    print("\nChecking positions...")
 
     today     = pd.Timestamp.now().normalize()
     positions = get_open_positions(client)
@@ -82,40 +58,68 @@ def check_and_close_old_positions(client):
         print("  no open positions")
         return
 
+    # get real entry dates from Alpaca orders history
+    orders      = client.get_orders()
+    entry_dates = {}
+    for order in orders:
+        if order.filled_at and order.side.value == "buy":
+            symbol = order.symbol
+            filled = pd.Timestamp(order.filled_at).tz_localize(None).normalize()
+            if symbol not in entry_dates or filled < entry_dates[symbol]:
+                entry_dates[symbol] = filled
+
     closed = 0
     for position in positions:
-        symbol = position.symbol
-        qty    = abs(int(float(position.qty)))
+        symbol  = position.symbol
+        qty     = abs(int(float(position.qty)))
+        pnl_pct = float(position.unrealized_plpc)
+        pnl_usd = float(position.unrealized_pl)
+        entry   = float(position.avg_entry_price)
+        current = float(position.current_price)
 
-        # find the most recent entry for this symbol in our trades
-        symbol_trades = trades[trades["ticker"] == symbol]
-        if symbol_trades.empty:
-            print(f"  {symbol} — no entry in trades.csv, skipping")
-            continue
-
-        last_entry = symbol_trades["date_entree"].max()
+        last_entry = entry_dates.get(symbol, today)
         days_held  = (today - last_entry).days
 
-        print(f"  {symbol} — held {days_held} days (entry: {last_entry.date()})")
+        print(f"\n  {symbol}")
+        print(f"    entry: ${entry:.2f} | current: ${current:.2f}")
+        print(f"    PnL: ${pnl_usd:.2f} ({pnl_pct*100:.2f}%)")
+        print(f"    held: {days_held} days")
 
-        if days_held >= MAX_HOLDING_DAYS:
-            print(f"  -> {symbol} exceeded {MAX_HOLDING_DAYS} days — closing")
-            order = close_position(client, symbol, qty)
+        reason = None
+
+        # stop loss at -2%
+        if pnl_pct <= -STOP_LOSS_PCT:
+            reason = f"stop_loss ({pnl_pct*100:.1f}%)"
+
+        # take profit +5% days 1-3
+        elif days_held < 4 and pnl_pct >= TAKE_PROFIT_PCT:
+            reason = f"take_profit ({pnl_pct*100:.1f}%)"
+
+        # take profit +4% from day 4
+        elif days_held >= 4 and pnl_pct >= 0.04:
+            reason = f"take_profit_day4 ({pnl_pct*100:.1f}%)"
+
+        # max holding period
+        elif days_held >= MAX_HOLDING_DAYS:
+            reason = f"max_horizon ({days_held} days)"
+
+        if reason:
+            order = close_position(client, symbol, qty, reason)
             if order:
                 closed += 1
                 notify(
                     f"<b>🔴 Position Closed</b>\n"
                     f"━━━━━━━━━━━━━━━\n"
-                    f"Ticker    : <b>{symbol}</b>\n"
-                    f"Held      : <b>{days_held} days</b>\n"
-                    f"Reason    : max holding period\n"
-                    f"PnL       : <b>${float(position.unrealized_pl):.2f}</b>\n"
+                    f"Ticker  : <b>{symbol}</b>\n"
+                    f"Reason  : <b>{reason}</b>\n"
+                    f"PnL     : <b>${pnl_usd:.2f} ({pnl_pct*100:.1f}%)</b>\n"
+                    f"Held    : <b>{days_held} days</b>\n"
                     f"━━━━━━━━━━━━━━━\n"
                     f"<i>{datetime.now().strftime('%d/%m/%Y %H:%M')}</i>"
                 )
         else:
             remaining = MAX_HOLDING_DAYS - days_held
-            print(f"  -> {symbol} OK — {remaining} days remaining")
+            print(f"    -> holding — {remaining} days remaining")
 
     print(f"\n  {closed} positions closed")
 
@@ -134,7 +138,7 @@ def run_position_manager():
     )
 
     client = connect()
-    check_and_close_old_positions(client)
+    check_positions(client)
 
     print("\nDone.")
 
