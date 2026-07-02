@@ -52,29 +52,33 @@ def download_macro(period="5y"):
     return macro
 
 
-def download_fear_greed(days=365*5):
-    """Download Fear & Greed Index — no API key needed, 100% free."""
+def download_fear_greed(days=365*5, retries=3):
+    """Download Fear & Greed Index — no API key needed, 100% free.
+    Retries on failure, never crashes the pipeline."""
     print("\nDownloading Fear & Greed Index...")
-    try:
-        url      = f"https://api.alternative.me/fng/?limit={days}&format=json"
-        response = requests.get(url, timeout=10)
-        data     = response.json()["data"]
+    url = f"https://api.alternative.me/fng/?limit={days}&format=json"
 
-        df = pd.DataFrame(data)
-        df["timestamp"] = pd.to_datetime(df["timestamp"].astype(int), unit="s")
-        df = df.set_index("timestamp")
-        df = df.sort_index()
+    for attempt in range(1, retries + 1):
+        try:
+            response = requests.get(url, timeout=15)
+            data     = response.json()["data"]
 
-        # keep only numeric value
-        df["fear_greed"] = df["value"].astype(int)
-        df = df[["fear_greed"]]
+            df = pd.DataFrame(data)
+            df["timestamp"] = pd.to_datetime(df["timestamp"].astype(int), unit="s")
+            df = df.set_index("timestamp")
+            df = df.sort_index()
 
-        print(f"  {len(df)} days downloaded — current: {df['fear_greed'].iloc[-1]}")
-        return df
+            df["fear_greed"] = df["value"].astype(int)
+            df = df[["fear_greed"]]
 
-    except Exception as e:
-        print(f"  error: {e}")
-        return pd.DataFrame()
+            print(f"  {len(df)} days downloaded — current: {df['fear_greed'].iloc[-1]}")
+            return df
+
+        except Exception as e:
+            print(f"  attempt {attempt}/{retries} failed: {e}")
+
+    print("  Fear & Greed API unavailable — using neutral fallback (50)")
+    return pd.DataFrame()
 
 
 def clean_data(data):
@@ -155,13 +159,24 @@ def compute_features(data, macro, fear_greed):
             if "DX_Y_NYB" in df.columns:
                 df["dollar_change"] = df["DX_Y_NYB"].pct_change(5)
 
-        # fear & greed index
+        # fear & greed index — always create the columns, even on API failure
         if not fear_greed.empty:
             df = df.join(fear_greed, how="left")
             df = df.ffill()
-            if "fear_greed" in df.columns:
-                # variation sur 5 jours — est-ce que la peur monte ou baisse ?
-                df["fear_greed_change"] = df["fear_greed"].pct_change(5)
+            df["fear_greed_change"] = df["fear_greed"].pct_change(5)
+        else:
+            # neutral fallback so model.py never crashes on missing columns
+            df["fear_greed"]        = 50
+            df["fear_greed_change"] = 0.0
+
+        # safety net — guarantee these columns always exist
+        if "fear_greed" not in df.columns:
+            df["fear_greed"] = 50
+        if "fear_greed_change" not in df.columns:
+            df["fear_greed_change"] = 0.0
+
+        df["fear_greed"]        = df["fear_greed"].fillna(50)
+        df["fear_greed_change"] = df["fear_greed_change"].fillna(0.0)
 
         results.append(df)
 
